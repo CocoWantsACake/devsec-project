@@ -1,0 +1,109 @@
+<?php
+	// Connexion unique à la base de données SQLite
+	$databasePath = __DIR__ . '/mydatabase.sqlite';
+	$db = new SQLite3($databasePath);
+
+	// Tâble des tâches, créées si non existante
+	$query = "CREATE TABLE IF NOT EXISTS tasks (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		task TEXT NOT NULL,
+		status TEXT NOT NULL CHECK(status IN ('created', 'started', 'done')) DEFAULT 'created',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)";
+	if (! $db->exec($query)) {
+		echo "Error creating table: " . $db->lastErrorMsg();
+	}
+
+	// Traitement du formulaire de mise à jour
+	if (isset($_POST['update'])) {
+		$id = $_POST['id'];
+		$task = $_POST['task'];
+		$status = $_POST['status'];
+
+		// Requête de mise à jour
+		$stmt = $db->prepare("UPDATE tasks SET task = :task, status = :status WHERE id = :id");
+		$stmt->bindValue(':task', $task, SQLITE3_TEXT);
+		$stmt->bindValue(':status', $status, SQLITE3_TEXT);
+		$stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+		$stmt->execute();
+
+		// Redirection pour éviter la soumission multiple du formulaire
+		header("Location: ".$_SERVER['PHP_SELF']);
+		exit();
+	}
+?>
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>To-Do List</title>
+</head>
+<body>
+    <h1>To-Do List</h1>
+    <form method="POST" action="">
+        <input type="text" name="task" placeholder="Nouvelle tâche" required>
+        <button type="submit" name="add">Ajouter</button>
+    </form>
+
+    <form method="GET" action="">
+        <input type="text" name="search" placeholder="Rechercher une tâche">
+        <button type="submit">Rechercher</button>
+    </form>
+
+    <h2>Liste des tâches</h2>
+    <ul>
+        <?php
+        // Recherche de tâches (vulnérable à l'injection SQL)
+        $search = $_GET['search'] ?? '';
+        $query = "SELECT * FROM tasks WHERE task LIKE '%$search%'";
+        $result = $db->query($query);
+		
+		
+
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            echo "<li>
+                  <strong>{$row['task']}</strong> (Statut : {$row['status']})
+                  <a href='?delete={$row['id']}'>Supprimer</a>
+                  <a href='?edit={$row['id']}'>Modifier</a>
+                  </li>";
+        }
+
+        // Suppression d'une tâche (vulnérable à l'injection SQL)
+		// Aussi possible de modifier le lien de suppression d'une tâche, en remplaçant dans le lien "?delete=17" par "?delete='17' OR 1=1".
+		// Cette technique permet de supprimer l'intégralité des tâches.
+        if (isset($_GET['delete'])) {
+            $id = $_GET['delete'];
+            $db->exec("DELETE FROM tasks WHERE id=$id");
+            header("Location: ".$_SERVER['PHP_SELF']);
+            exit();
+        }
+
+        // Modification d'une tâche (vulnérable à l'injection SQL et XSS)
+        if (isset($_GET['edit'])) {
+            $id = $_GET['edit'];
+            $task = $db->querySingle("SELECT task FROM tasks WHERE id=$id");
+            $status = $db->querySingle("SELECT status FROM tasks WHERE id=$id");
+            echo "<form method='POST' action=''>
+                  <input type='text' name='task' value='$task'>
+                  <select name='status'>
+                      <option value='created'" . ($status == 'created' ? ' selected' : '') . ">created</option>
+                      <option value='started'" . ($status == 'started' ? ' selected' : '') . ">started</option>
+                      <option value='done'" . ($status == 'done' ? ' done' : '') . ">Terminée</option>
+                  </select>
+                  <input type='hidden' name='id' value='$id'>
+                  <button type='submit' name='update'>Mettre à jour</button>
+                  </form>";
+        }
+
+        // Ajout d'une tâche (vulnérable à XSS)
+        if (isset($_POST['add'])) {
+            $task = $_POST['task'];
+            $db->exec("INSERT INTO tasks (task) VALUES ('$task')");
+            header("Location: ".$_SERVER['PHP_SELF']);
+            exit();
+        }
+        ?>
+    </ul>
+</body>
+</html>
